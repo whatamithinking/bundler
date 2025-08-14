@@ -2,6 +2,15 @@
 
 Package python apps for deployment on different platforms
 
+## Table of Contents
+
+- [WhatAmIThinking-Bundler](#whatamithinking-bundler)
+  - [Table of Contents](#table-of-contents)
+  - [Requirements](#requirements)
+    - [Requirements - Windows](#requirements---windows)
+  - [Known Issues](#known-issues)
+    - [Known Issues - Windows](#known-issues---windows)
+
 ## Requirements
 
 ### Requirements - Windows
