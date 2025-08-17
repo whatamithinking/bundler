@@ -7,4 +7,4 @@ else:
     raise RuntimeError("Platform not supported")
 
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
