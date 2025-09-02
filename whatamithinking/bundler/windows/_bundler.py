@@ -81,10 +81,10 @@ class BundleConfig:
             self.bitness = 64 if sys.maxsize > 2**32 else 32
         if self.data_files:
             for i, (src, dst) in enumerate(self.data_files):
-                self.data_files[i] = [src.resolve(), dst]
+                self.data_files[i] = (src.resolve(), dst)
         if self.binary_files:
             for i, (src, dst) in enumerate(self.binary_files):
-                self.binary_files[i] = [src.resolve(), dst]
+                self.binary_files[i] = (src.resolve(), dst)
 
 
 def create_bundle(
