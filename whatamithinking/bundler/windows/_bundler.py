@@ -51,6 +51,9 @@ class BundleConfig:
     """List of packages which are required but are not directly imported
     in the app code. These should be import names not package names, which are
     sometimes different."""
+    include_metadata: Optional[list[str]] = None
+    """List of packages which you want to include the package metadata/dist-info
+    for. Usually not needed, but some packages depend on this."""
     packages_with_hidden_data: Optional[list[str]] = None
     """List of packages with internal data files you want to import. Should be 
     used when your app fails to run because a data file in a package was not included."""
@@ -175,6 +178,9 @@ def create_bundle(
     if bundle_config.hidden_imports:
         for pkg in bundle_config.hidden_imports:
             cmds.extend(["--hidden-import", pkg])
+    if bundle_config.include_metadata:
+        for pkg in bundle_config.include_metadata:
+            cmds.extend(["--copy-metadata", pkg])
     if bundle_config.packages_with_hidden_data:
         for pkg in bundle_config.packages_with_hidden_data:
             cmds.extend(["--collect-data", pkg])
