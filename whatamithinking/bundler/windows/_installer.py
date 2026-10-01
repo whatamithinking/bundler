@@ -208,7 +208,7 @@ def _convert_ico_to_bmp(ico_filepath: Path, bmp_filepath: Path) -> bool:
         return False
 
     width, height, offset = best
-    (bi_size, _bi_w, bi_height, _planes, bit_count, compression, *_rest) = (
+    bi_size, _bi_w, bi_height, _planes, bit_count, compression, *_rest = (
         binstruct.unpack_from("<IiiHHIIiiII", data, offset)
     )
     if compression != 0:
@@ -229,7 +229,12 @@ def _convert_ico_to_bmp(ico_filepath: Path, bmp_filepath: Path) -> bool:
     binstruct.pack_into("<i", dib_header, 8, height)
 
     file_header = binstruct.pack(
-        "<2sIHHI", b"BM", 14 + len(dib_header) + pixel_data_size, 0, 0, 14 + len(dib_header)
+        "<2sIHHI",
+        b"BM",
+        14 + len(dib_header) + pixel_data_size,
+        0,
+        0,
+        14 + len(dib_header),
     )
     bmp_filepath.write_bytes(
         file_header
@@ -267,8 +272,10 @@ def create_installer(
     )
 
     if not _is_inno_setup_installed():
-        raise Exception("Inno Setup (iscc) is not installed. "
-                        "Please install and add iscc.exe to your env path.")
+        raise Exception(
+            "Inno Setup (iscc) is not installed. "
+            "Please install and add iscc.exe to your env path."
+        )
 
     _codec.execute(installer_config, source="struct", target="struct", validate=True)
 
