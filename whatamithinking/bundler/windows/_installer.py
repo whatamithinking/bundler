@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional, Literal, Annotated
 import subprocess
+import struct as binstruct
 import sys
 import time
 import shutil
@@ -173,6 +174,71 @@ def _is_inno_setup_installed() -> bool:
     return shutil.which("iscc") is not None
 
 
+def _convert_ico_to_bmp(ico_filepath: Path, bmp_filepath: Path) -> bool:
+    """Extract one of the raw (non-PNG-compressed) bitmap frames embedded in an
+    .ico file and save it as a standalone .bmp, for use as Inno Setup's
+    WizardSmallImageFile. Avoids a dependency on an image library (e.g. Pillow)
+    by directly parsing the ico/bmp binary formats with struct.
+
+    Returns False, without writing anything, if no usable frame is found (e.g.
+    the ico only contains PNG-compressed frames).
+    """
+    data = ico_filepath.read_bytes()
+    _reserved, img_type, count = binstruct.unpack_from("<HHH", data, 0)
+    if img_type != 1:
+        raise ValueError(f"{ico_filepath} is not a valid .ico file.")
+
+    # prefer the largest raw (non-PNG) frame available, for the best quality
+    best = None
+    for i in range(count):
+        width, height, _colors, _reserved, _planes, _bits, size, offset = (
+            binstruct.unpack_from("<BBBBHHII", data, 6 + i * 16)
+        )
+        width = width or 256
+        height = height or 256
+        if data[offset : offset + 8] == b"\x89PNG\r\n\x1a\n":
+            continue
+        if best is None or width > best[0]:
+            best = (width, height, offset)
+    if best is None:
+        logger.warning(
+            f"{ico_filepath} has no raw bitmap frames to reuse as the wizard's "
+            "small image (only PNG-compressed frames); skipping."
+        )
+        return False
+
+    width, height, offset = best
+    (bi_size, _bi_w, bi_height, _planes, bit_count, compression, *_rest) = (
+        binstruct.unpack_from("<IiiHHIIiiII", data, offset)
+    )
+    if compression != 0:
+        logger.warning(
+            f"{ico_filepath}'s raw bitmap frame is compressed; skipping wizard "
+            "small image generation."
+        )
+        return False
+
+    clr_used = binstruct.unpack_from("<I", data, offset + 32)[0]
+    color_table_size = (clr_used or (1 << bit_count if bit_count <= 8 else 0)) * 4
+    row_size = ((width * bit_count + 31) // 32) * 4
+    pixel_data_size = row_size * height
+    pixel_data_offset = offset + bi_size + color_table_size
+
+    # the ico stores a doubled height to account for the trailing AND mask, which we drop
+    dib_header = bytearray(data[offset : offset + bi_size + color_table_size])
+    binstruct.pack_into("<i", dib_header, 8, height)
+
+    file_header = binstruct.pack(
+        "<2sIHHI", b"BM", 14 + len(dib_header) + pixel_data_size, 0, 0, 14 + len(dib_header)
+    )
+    bmp_filepath.write_bytes(
+        file_header
+        + bytes(dib_header)
+        + data[pixel_data_offset : pixel_data_offset + pixel_data_size]
+    )
+    return True
+
+
 def create_installer(
     installer_config: InstallerConfig,
     buildpath: Path = Path("./build"),
@@ -212,12 +278,21 @@ def create_installer(
     buildpath = (buildpath / installer_config.filename.stem).resolve()
     buildpath.mkdir(parents=True, exist_ok=True)
 
+    wizard_small_image_filepath = None
+    if installer_config.icon_filepath:
+        candidate_filepath = buildpath / "wizard_small_image.bmp"
+        if _convert_ico_to_bmp(installer_config.icon_filepath, candidate_filepath):
+            wizard_small_image_filepath = candidate_filepath
+
     params = dict(
         (f"installer_{k}", v)
         for k, v in _codec.execute(
             installer_config, source="struct", target="unstruct", convert=True
         ).items()
-    ) | dict(installer_distpath=distpath)
+    ) | dict(
+        installer_distpath=distpath,
+        installer_wizard_small_image_filepath=wizard_small_image_filepath,
+    )
 
     installer_script_path = buildpath / "installer.iss"
     with open(installer_script_path, "w") as f:

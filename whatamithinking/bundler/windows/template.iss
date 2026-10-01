@@ -28,6 +28,10 @@ UninstallDisplayIcon={uninstallexe}
 ; set custom icon for the installer exe itself, if givenl otherwise uses inno setup icon
 SetupIconFile={{ installer_icon_filepath }}
 {%- endif %}
+{% if installer_wizard_small_image_filepath -%}
+; small image shown top-right of each wizard page, derived from installer_icon_filepath
+WizardSmallImageFile={{ installer_wizard_small_image_filepath }}
+{%- endif %}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
