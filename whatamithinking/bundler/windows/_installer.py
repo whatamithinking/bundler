@@ -263,7 +263,7 @@ def create_installer(
             before giving up. Defaults to 300 seconds or 5 minutes.
     """
     logger.info(
-        f"Building installer {installer_config.title} ({installer_config.name})"
+        f"Building installer {installer_config.title} ({installer_config.name}-{installer_config.version})"
     )
 
     if not _is_inno_setup_installed():
@@ -299,7 +299,7 @@ def create_installer(
         f.write(_build_iss(params, installer_config.title, installer_config.name))
 
     logger.info(
-        f"Compiling installer {installer_config.title} ({installer_config.name})"
+        f"Compiling installer {installer_config.title} ({installer_config.name}-{installer_config.version})"
     )
     deadline = time.perf_counter() + timeout
     has_failed = False
@@ -335,5 +335,5 @@ def create_installer(
     # add final message so person watching knows it eventually worked!
     if has_failed:
         logger.info(
-            f"Compiled installer {installer_config.title} ({installer_config.name})"
+            f"Compiled installer {installer_config.title} ({installer_config.name}-{installer_config.version})"
         )
