@@ -5,6 +5,7 @@ import struct as binstruct
 import sys
 import time
 import shutil
+import zlib
 
 from jinja2 import Environment
 from whatamithinking.jsonproto import struct, Codec, DefaultFactory
@@ -174,14 +175,20 @@ def _is_inno_setup_installed() -> bool:
     return shutil.which("iscc") is not None
 
 
-def _convert_ico_to_bmp(ico_filepath: Path, bmp_filepath: Path) -> bool:
+def _convert_ico_to_png(ico_filepath: Path, png_filepath: Path) -> bool:
     """Extract one of the raw (non-PNG-compressed) bitmap frames embedded in an
-    .ico file and save it as a standalone .bmp, for use as Inno Setup's
+    .ico file and save it as a standalone .png, for use as Inno Setup's
     WizardSmallImageFile. Avoids a dependency on an image library (e.g. Pillow)
-    by directly parsing the ico/bmp binary formats with struct.
+    by directly parsing the ico/bmp binary format with struct and writing a
+    minimal, uncompressed-filter .png with zlib.
+
+    Unlike a plain 32-bit .bmp, a .png's alpha channel is part of the standardized
+    file format, so any viewer (and Inno Setup, without extra directives) renders
+    transparent pixels correctly instead of as opaque black.
 
     Returns False, without writing anything, if no usable frame is found (e.g.
-    the ico only contains PNG-compressed frames).
+    the ico only contains PNG-compressed frames) or the frame's bit depth isn't
+    supported.
     """
     data = ico_filepath.read_bytes()
     _reserved, img_type, count = binstruct.unpack_from("<HHH", data, 0)
@@ -208,7 +215,7 @@ def _convert_ico_to_bmp(ico_filepath: Path, bmp_filepath: Path) -> bool:
         return False
 
     width, height, offset = best
-    bi_size, _bi_w, bi_height, _planes, bit_count, compression, *_rest = (
+    bi_size, _bi_w, _bi_h, _planes, bit_count, compression, *_rest = (
         binstruct.unpack_from("<IiiHHIIiiII", data, offset)
     )
     if compression != 0:
@@ -217,29 +224,61 @@ def _convert_ico_to_bmp(ico_filepath: Path, bmp_filepath: Path) -> bool:
             "small image generation."
         )
         return False
+    if bit_count not in (32, 24, 8, 4, 1):
+        logger.warning(
+            f"{ico_filepath}'s raw bitmap frame has an unsupported bit depth "
+            f"({bit_count}); skipping wizard small image generation."
+        )
+        return False
 
     clr_used = binstruct.unpack_from("<I", data, offset + 32)[0]
-    color_table_size = (clr_used or (1 << bit_count if bit_count <= 8 else 0)) * 4
+    palette_count = clr_used or (1 << bit_count if bit_count <= 8 else 0)
+    palette_offset = offset + bi_size
+    palette = [
+        tuple(data[palette_offset + i * 4 : palette_offset + i * 4 + 3][::-1])
+        for i in range(palette_count)
+    ]
+    pixel_data_offset = palette_offset + palette_count * 4
     row_size = ((width * bit_count + 31) // 32) * 4
-    pixel_data_size = row_size * height
-    pixel_data_offset = offset + bi_size + color_table_size
 
-    # the ico stores a doubled height to account for the trailing AND mask, which we drop
-    dib_header = bytearray(data[offset : offset + bi_size + color_table_size])
-    binstruct.pack_into("<i", dib_header, 8, height)
+    def get_pixel(x: int, y: int) -> tuple:
+        # the ico stores rows bottom-up and a trailing AND mask after this, which we ignore
+        row_offset = pixel_data_offset + (height - 1 - y) * row_size
+        if bit_count == 32:
+            b, g, r, a = data[row_offset + x * 4 : row_offset + x * 4 + 4]
+            return r, g, b, a
+        if bit_count == 24:
+            b, g, r = data[row_offset + x * 3 : row_offset + x * 3 + 3]
+            return r, g, b, 255
+        pixels_per_byte = 8 // bit_count
+        byte = data[row_offset + x // pixels_per_byte]
+        shift = (pixels_per_byte - 1 - x % pixels_per_byte) * bit_count
+        index = (byte >> shift) & ((1 << bit_count) - 1)
+        r, g, b = palette[index]
+        return r, g, b, 255
 
-    file_header = binstruct.pack(
-        "<2sIHHI",
-        b"BM",
-        14 + len(dib_header) + pixel_data_size,
-        0,
-        0,
-        14 + len(dib_header),
-    )
-    bmp_filepath.write_bytes(
-        file_header
-        + bytes(dib_header)
-        + data[pixel_data_offset : pixel_data_offset + pixel_data_size]
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)  # no per-row filter
+        for x in range(width):
+            raw.extend(get_pixel(x, y))
+
+    def chunk(tag: bytes, payload: bytes) -> bytes:
+        return (
+            binstruct.pack(">I", len(payload))
+            + tag
+            + payload
+            + binstruct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    ihdr = binstruct.pack(
+        ">IIBBBBB", width, height, 8, 6, 0, 0, 0
+    )  # color type 6 = RGBA
+    png_filepath.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + chunk(b"IEND", b"")
     )
     return True
 
@@ -287,8 +326,8 @@ def create_installer(
 
     wizard_small_image_filepath = None
     if installer_config.icon_filepath:
-        candidate_filepath = buildpath / "wizard_small_image.bmp"
-        if _convert_ico_to_bmp(installer_config.icon_filepath, candidate_filepath):
+        candidate_filepath = buildpath / "wizard_small_image.png"
+        if _convert_ico_to_png(installer_config.icon_filepath, candidate_filepath):
             wizard_small_image_filepath = candidate_filepath
 
     params = dict(
